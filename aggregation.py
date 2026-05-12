@@ -17,13 +17,27 @@ single entry point called from the notebook.
 
 from __future__ import annotations
 
+import os
+
 import torch
 
 
 # Which hidden-state stack entry to use for the last-token feature.
 # Index 0 = token embeddings; indices 1..24 = transformer block outputs for
 # Qwen2.5-0.5B. Keep -1 for the final transformer layer, or set e.g. 12/18/20.
-_LAST_TOKEN_LAYER_INDEX: int = 24
+_LAST_TOKEN_LAYER_INDEX: int = -3
+_LAST_TOKEN_LAYER_ENV = "LAST_TOKEN_LAYER_INDEX"
+
+
+def _get_last_token_layer_index() -> int:
+    """Return selected layer index, optionally overridden by env var."""
+    raw_layer = os.environ.get(_LAST_TOKEN_LAYER_ENV)
+    if raw_layer is None:
+        return _LAST_TOKEN_LAYER_INDEX
+    try:
+        return int(raw_layer)
+    except ValueError as exc:
+        raise ValueError(f"{_LAST_TOKEN_LAYER_ENV} must be an integer") from exc
 
 
 def aggregate(
@@ -53,12 +67,13 @@ def aggregate(
 
     # Last real token from a configurable layer.
     n_layers = hidden_states.shape[0]
-    layer_idx = _LAST_TOKEN_LAYER_INDEX
+    selected_layer = _get_last_token_layer_index()
+    layer_idx = selected_layer
     if layer_idx < 0:
         layer_idx += n_layers
     if not 0 <= layer_idx < n_layers:
         raise ValueError(
-            f"layer index {_LAST_TOKEN_LAYER_INDEX} invalid for n_layers={n_layers}"
+            f"layer index {selected_layer} invalid for n_layers={n_layers}"
         )
     layer = hidden_states[layer_idx]   # (seq_len, hidden_dim)
 

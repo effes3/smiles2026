@@ -10,6 +10,8 @@ and their signatures must not change.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -17,7 +19,19 @@ from sklearn.metrics import f1_score
 from sklearn.preprocessing import StandardScaler
 
 
+_RANDOM_SEED_ENV = "PROBE_RANDOM_SEED"
 _RANDOM_SEED: int = 42
+
+
+def _get_random_seed() -> int:
+    """Return the probe seed, optionally overridden by an environment variable."""
+    raw_seed = os.environ.get(_RANDOM_SEED_ENV)
+    if raw_seed is None:
+        return _RANDOM_SEED
+    try:
+        return int(raw_seed)
+    except ValueError as exc:
+        raise ValueError(f"{_RANDOM_SEED_ENV} must be an integer") from exc
 
 
 def _seed_everything(seed: int = _RANDOM_SEED) -> None:
@@ -90,7 +104,7 @@ class HallucinationProbe(nn.Module):
         Returns:
             ``self`` (for method chaining).
         """
-        _seed_everything()
+        _seed_everything(_get_random_seed())
         X_scaled = self._scaler.fit_transform(X)
 
         self._build_network(X_scaled.shape[1])
