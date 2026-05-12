@@ -2,6 +2,8 @@
 
 For a detailed visual inspection of the latent representation geometry, please refer to the exploratory figures provided in `test.ipynb`
 
+The report file is `SOLUTION.md`
+
 Binary **hallucination detection** for **[Qwen/Qwen2.5-0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B)** using frozen hidden states: we aggregate per-layer representations from `prompt + response`, train a small **probe** on `data/dataset.csv`, and write `predictions.csv` for `data/test.csv`.
 
 **Competition ranking (official):** performance on the held-out **`test.csv`** (see task materials). **Internal development:** we mostly tracked **5-fold mean test AUROC** on the labelled set (see `evaluate.py` and `results.json`).
