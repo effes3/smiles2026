@@ -42,6 +42,25 @@ def _seed_everything(seed: int = _RANDOM_SEED) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+class SwiGLUProbeMLP(nn.Module):
+    """Small SwiGLU-style classifier head.
+
+    Computes ``down_proj(silu(gate_proj(x)) * up_proj(x))``. This mirrors the
+    gated MLP shape used in modern decoder blocks while keeping the probe small.
+    """
+
+    def __init__(self, input_dim: int, hidden_dim: int = 256) -> None:
+        super().__init__()
+        self.gate_proj = nn.Linear(input_dim, hidden_dim)
+        self.up_proj = nn.Linear(input_dim, hidden_dim)
+        self.down_proj = nn.Linear(hidden_dim, 1)
+        self.activation = nn.SiLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        gated = self.activation(self.gate_proj(x)) * self.up_proj(x)
+        return self.down_proj(gated)
+
+
 class HallucinationProbe(nn.Module):
     """Binary classifier that detects hallucinations from hidden-state features.
 
@@ -52,7 +71,7 @@ class HallucinationProbe(nn.Module):
 
     def __init__(self) -> None:
         super().__init__()
-        self._net: nn.Sequential | None = None  # built lazily in fit()
+        self._net: nn.Module | None = None  # built lazily in fit()
         self._scaler = StandardScaler()
         self._threshold: float = 0.5  # tuned by fit_hyperparameters()
 
@@ -67,11 +86,7 @@ class HallucinationProbe(nn.Module):
         Args:
             input_dim: Feature vector dimensionality.
         """
-        self._net = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
-        )
+        self._net = SwiGLUProbeMLP(input_dim=input_dim, hidden_dim=256)
 
     # ------------------------------------------------------------------
 
