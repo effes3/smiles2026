@@ -21,11 +21,10 @@ import torch
 
 
 # Index 0 = token embeddings; indices 1..24 = transformer block outputs for
-# Qwen2.5-0.5B. "Dual-core": semantic peak (12) + decision peak (23) last tokens,
-# plus norm ratio ||h23_last|| / ||h22_last||.
-_SEMANTIC_LAYER: int = 12
-_DECISION_LAYER: int = 23
-_NORM_RATIO_REFERENCE_LAYER: int = 22
+# Qwen2.5-0.5B.
+_LAYER_EARLY: int = 6
+_LAYER_NORM_DENOM: int = 21
+_LAYER_NORM_NUM: int = 22
 
 
 def _resolve_layer_index(selected_layer: int, n_layers: int) -> int:
@@ -53,9 +52,10 @@ def aggregate(
                         tokens and 0 for padding.
 
     Returns:
-        Concatenation of last-token ``h12``, last-token ``h23``, and scalar
-        ``||h23||_2 / ||h22||_2`` → shape ``(2 * hidden_dim + 1,)`` (1793 for
-        hidden_dim=896).
+        ``concat(h6_last, h22_last, norm_ratio, cosine)`` where
+        ``norm_ratio = ||h22_last|| / ||h21_last||`` and
+        ``cosine = cos(h6_last, h22_last)``. Shape ``(2 * hidden_dim + 2,)``
+        (1794 for ``hidden_dim = 896``).
 
     Student task:
         Replace or extend the skeleton below with alternative layer selection,
@@ -63,22 +63,25 @@ def aggregate(
     """
     # ------------------------------------------------------------------
     n_layers = hidden_states.shape[0]
-    idx12 = _resolve_layer_index(_SEMANTIC_LAYER, n_layers)
-    idx23 = _resolve_layer_index(_DECISION_LAYER, n_layers)
-    idx22 = _resolve_layer_index(_NORM_RATIO_REFERENCE_LAYER, n_layers)
+    idx6 = _resolve_layer_index(_LAYER_EARLY, n_layers)
+    idx21 = _resolve_layer_index(_LAYER_NORM_DENOM, n_layers)
+    idx22 = _resolve_layer_index(_LAYER_NORM_NUM, n_layers)
 
     real_positions = attention_mask.nonzero(as_tuple=False)
     last_pos = int(real_positions[-1].item())
 
-    h12_last = hidden_states[idx12, last_pos]
-    h23_last = hidden_states[idx23, last_pos]
-    h22_last = hidden_states[idx22, last_pos]
+    h6 = hidden_states[idx6, last_pos]
+    h21 = hidden_states[idx21, last_pos]
+    h22 = hidden_states[idx22, last_pos]
 
-    norm23 = torch.linalg.norm(h23_last, ord=2)
-    norm22 = torch.linalg.norm(h22_last, ord=2)
-    norm_ratio = norm23 / (norm22 + torch.finfo(h23_last.dtype).eps)
+    n6 = torch.linalg.norm(h6, ord=2)
+    n21 = torch.linalg.norm(h21, ord=2)
+    n22 = torch.linalg.norm(h22, ord=2)
+    eps = torch.finfo(h6.dtype).eps
+    norm_ratio = n22 / (n21 + eps)
+    cosine = torch.dot(h6, h22) / (n6 * n22 + eps)
 
-    return torch.cat([h12_last, h23_last, norm_ratio.reshape(1)], dim=0)
+    return torch.cat([h6, h22, norm_ratio.reshape(1), cosine.reshape(1)], dim=0)
     # ------------------------------------------------------------------
 
 
