@@ -66,7 +66,9 @@ Numbers are **mean test AUROC** (5-fold average, then mean over seeds 42–44) a
 | L19/L22/L23 + chain-graph spectral scalars + norm + SiLU MLP | 72.57% (`TESTS_FINAL.md`) |
 | L12 + L23 + norm + sklearn PCA(128) + MLPClassifier | 66.20% (`TESTS_12n23_layer.md`) |
 
-Higher internal AUROC is better **for that evaluation protocol**; the best line here is the **compact L23 geometry** row.
+**K-fold reporting (what the numbers feel like):** after switching to **5-fold** stratified evaluation, **most** logged mean test AUROCs sit **around 72–73%** or lower; only the strongest geometry line (`TESTS_Ratio.md`) lands **just above** that band (**~73.8%**). Earlier **single-split** / layer-sweep logs (e.g. `TESTS.md`, `TESTS_Geometry.md`) often showed **~75%+** test AUROC on a **single** partition—useful for exploration, but **optimistic** compared to the K-fold mean.
+
+Higher internal AUROC is better **for that evaluation protocol**; the best line in the K-fold table is still the **compact L23 geometry** row.
 
 ### Figure 4 — All metrics: before K-fold vs K-fold mean
 
@@ -101,13 +103,13 @@ xychart-beta
     bar [75.39, 72.64, 73.77]
 ```
 
-The middle bar is **not** comparable feature-for-feature to the first (different `aggregation.py` / probe). Use it as **stability vs optimism**: K-fold averages damp single-split luck; the right bar shows what the best **same-protocol** sweep reached when aggregation matched the L23 geometry recipe.
+The middle bar is **not** comparable feature-for-feature to the first (different `aggregation.py` / probe). Single-split logs can sit **~75%+** on one partition; **K-fold means** for the same development period mostly land **under ~73%** test AUROC (the **~73.8%** “best log” bar is the exception: `TESTS_Ratio.md`). Treat that as **less luck, more realism** when comparing eras.
 
 ---
 
 ## What we did and why
 
-**Splitting (`splitting.py`).** We replaced a single random split with **stratified K-fold** so metrics are less lucky on one partition, and we kept a **validation** slice inside each fold so the probe can tune a **decision threshold** on probabilities without peeking at the fold’s test indices. Stratification matches the **skewed label ratio** in `dataset.csv` (~70% hallucinated), which stabilizes fold-wise prevalence.
+**Splitting (`splitting.py`).** We replaced a single random split with **stratified K-fold** so metrics are less lucky on one partition, and we kept a **validation** slice inside each fold so the probe can tune a **decision threshold** on probabilities without peeking at the fold’s test indices. Stratification matches the **skewed label ratio** in `dataset.csv` (~70% hallucinated), which stabilizes fold-wise prevalence. In practice, **mean test AUROC under K-fold** clustered **around or below ~73%** for most feature stacks we logged; that is lower than many **single-split** layer sweeps (~**75%+** in `TESTS.md` / `TESTS_Geometry.md`) and reflects **harder, repeated** test draws rather than one easy test fold.
 
 **Aggregation (`aggregation.py`).** We iterated on **which layers** and **what geometry** to expose to the probe. Facts from the logged experiments:
 
@@ -202,4 +204,4 @@ Optional: set `PROBE_RANDOM_SEED` for reproducible probe training.
 
 **A4:** The repository must be **self-contained** and runnable with the provided **`solution.py`**. You must **not** rely on changes to fixed infrastructure (`model.py`, `evaluate.py`). Running `python solution.py` must generate the **`predictions.csv`** you submit.
 
-**Note:** This repo’s `.gitignore` ignores `*.ipynb` and `*.json`. For submission, make sure **`results.json`** and **`SOLUTION.md`** are actually **tracked by git** (narrow the ignore patterns, `git add -f results.json`, or equivalent) so the repository meets **A2**.
+**Note:** This repo’s `.gitignore` lists **`*.ipynb`**, so notebooks are not tracked unless you change that. **`results.json`** is *not* ignored by the snippet above, so it can be committed as required for submission **A2**. (Optional entries like `BASELINE.md` / `README_ONE.md` / `README_TWO.md` are ignored—remove those lines if you want them in git.)
