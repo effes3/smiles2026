@@ -1,9 +1,9 @@
 """
 probe.py — Hallucination probe classifier (student-implemented).
 
-Implements ``HallucinationProbe``, a binary MLP that classifies feature
-vectors as truthful (0) or hallucinated (1).  Called from ``solution.py``
-via ``evaluate.run_evaluation``.  All four public methods (``fit``,
+Implements ``HallucinationProbe``, a binary **linear** probe (logistic
+regression on scaled features) for truthful (0) vs hallucinated (1).  Called
+from ``solution.py`` via ``evaluate.run_evaluation``.  All four public methods (``fit``,
 ``fit_hyperparameters``, ``predict``, ``predict_proba``) must be implemented
 and their signatures must not change.
 """
@@ -20,14 +20,13 @@ from sklearn.preprocessing import StandardScaler
 class HallucinationProbe(nn.Module):
     """Binary classifier that detects hallucinations from hidden-state features.
 
-    Extends ``torch.nn.Module``; the default architecture is a single
-    hidden-layer MLP with ``StandardScaler`` pre-processing.  The network is
-    built lazily in ``fit()`` once the feature dimension is known.
+    Extends ``torch.nn.Module``; uses ``StandardScaler`` then a single
+    ``nn.Linear`` into one logit (trained with BCE).  Built lazily in ``fit()``.
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self._net: nn.Sequential | None = None  # built lazily in fit()
+        self._net: nn.Linear | None = None  # built lazily in fit()
         self._scaler = StandardScaler()
         self._threshold: float = 0.5  # tuned by fit_hyperparameters()
 
@@ -42,11 +41,7 @@ class HallucinationProbe(nn.Module):
         Args:
             input_dim: Feature vector dimensionality.
         """
-        self._net = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
-        )
+        self._net = nn.Linear(input_dim, 1)
 
     # ------------------------------------------------------------------
 
@@ -69,7 +64,7 @@ class HallucinationProbe(nn.Module):
         """Train the probe on labelled feature vectors.
 
         Scales features with ``StandardScaler``, builds the network if needed,
-        and optimises with Adam + ``BCEWithLogitsLoss``.
+        and optimises with Adam + ``BCEWithLogitsLoss`` (linear probe).
 
         Args:
             X: Feature matrix of shape ``(n_samples, feature_dim)``.
