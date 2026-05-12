@@ -21,9 +21,9 @@ import torch
 
 
 # Index 0 = token embeddings; indices 1..24 = transformer block outputs for
-# Qwen2.5-0.5B. Use compact late-layer deltas into layer 23.
-_DELTA_BASE_LAYERS: tuple[int, ...] = (21, 22)
-_DELTA_TARGET_LAYER: int = 23
+# Qwen2.5-0.5B. Layer 23 was the strongest single layer under K-fold.
+_FEATURE_LAYER: int = 23
+_NORM_RATIO_REFERENCE_LAYER: int = 22
 
 
 def aggregate(
@@ -40,10 +40,10 @@ def aggregate(
                         tokens and 0 for padding.
 
     Returns:
-        A 1-D feature tensor containing ``h23_last``, ``h23_last - h22_last``,
-        ``h23_last - h21_last``, followed by three geometric scalars computed
-        on layer 23: ``||last||_2``, cosine similarity between first and last
-        real token, and Euclidean distance between first and last real token.
+        A 1-D feature tensor containing ``h23_last`` followed by three
+        geometric scalars: ``||h23_last||_2 / ||h22_last||_2``, cosine
+        similarity between first and last real token at layer 23, and Euclidean
+        distance between first and last real token at layer 23.
 
     Student task:
         Replace or extend the skeleton below with alternative layer selection,
@@ -53,9 +53,9 @@ def aggregate(
     # STUDENT: Replace or extend the aggregation below.
     # ------------------------------------------------------------------
 
-    # Last real token and compact deltas into layer 23.
+    # Last real token from layer 23 plus compact geometry.
     n_layers = hidden_states.shape[0]
-    selected_layers = (*_DELTA_BASE_LAYERS, _DELTA_TARGET_LAYER)
+    selected_layers = (_FEATURE_LAYER, _NORM_RATIO_REFERENCE_LAYER)
     layer_indices: dict[int, int] = {}
     for selected_layer in selected_layers:
         layer_idx = selected_layer
@@ -74,26 +74,23 @@ def aggregate(
     first_pos = int(real_positions[0].item())                 # scalar index
     last_pos = int(real_positions[-1].item())                 # scalar index
 
-    target_last = hidden_states[layer_indices[_DELTA_TARGET_LAYER], last_pos]
-    delta_features = [target_last]
-    for base_layer in reversed(_DELTA_BASE_LAYERS):
-        base_last = hidden_states[layer_indices[base_layer], last_pos]
-        delta_features.append(target_last - base_last)
-
-    layer = hidden_states[layer_indices[_DELTA_TARGET_LAYER]]  # geometry readout layer
+    layer = hidden_states[layer_indices[_FEATURE_LAYER]]  # geometry readout layer
+    reference_layer = hidden_states[layer_indices[_NORM_RATIO_REFERENCE_LAYER]]
     first_state = layer[first_pos]     # (hidden_dim,)
     last_state = layer[last_pos]       # (hidden_dim,)
+    reference_last_state = reference_layer[last_pos]  # (hidden_dim,)
 
-    magnitude = torch.linalg.norm(last_state, ord=2)
+    reference_norm = torch.linalg.norm(reference_last_state, ord=2)
     first_norm = torch.linalg.norm(first_state, ord=2)
     last_norm = torch.linalg.norm(last_state, ord=2)
+    norm_ratio = last_norm / (reference_norm + torch.finfo(last_state.dtype).eps)
     cosine_similarity = torch.dot(first_state, last_state) / (
         first_norm * last_norm + torch.finfo(last_state.dtype).eps
     )
     relative_distance = torch.linalg.norm(last_state - first_state, ord=2)
 
-    geometry = torch.stack([magnitude, cosine_similarity, relative_distance])
-    return torch.cat([*delta_features, geometry], dim=0)
+    geometry = torch.stack([norm_ratio, cosine_similarity, relative_distance])
+    return torch.cat([last_state, geometry], dim=0)
     # ------------------------------------------------------------------
 
 
