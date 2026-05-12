@@ -21,9 +21,22 @@ import torch
 
 
 # Index 0 = token embeddings; indices 1..24 = transformer block outputs for
-# Qwen2.5-0.5B. Layer 23 was the strongest single layer under K-fold.
-_FEATURE_LAYER: int = 23
+# Qwen2.5-0.5B. "Dual-core": semantic peak (12) + decision peak (23) last tokens,
+# plus norm ratio ||h23_last|| / ||h22_last||.
+_SEMANTIC_LAYER: int = 12
+_DECISION_LAYER: int = 23
 _NORM_RATIO_REFERENCE_LAYER: int = 22
+
+
+def _resolve_layer_index(selected_layer: int, n_layers: int) -> int:
+    layer_idx = selected_layer
+    if layer_idx < 0:
+        layer_idx += n_layers
+    if not 0 <= layer_idx < n_layers:
+        raise ValueError(
+            f"layer index {selected_layer} invalid for n_layers={n_layers}"
+        )
+    return layer_idx
 
 
 def aggregate(
@@ -40,57 +53,32 @@ def aggregate(
                         tokens and 0 for padding.
 
     Returns:
-        A 1-D feature tensor containing ``h23_last`` followed by three
-        geometric scalars: ``||h23_last||_2 / ||h22_last||_2``, cosine
-        similarity between first and last real token at layer 23, and Euclidean
-        distance between first and last real token at layer 23.
+        Concatenation of last-token ``h12``, last-token ``h23``, and scalar
+        ``||h23||_2 / ||h22||_2`` → shape ``(2 * hidden_dim + 1,)`` (1793 for
+        hidden_dim=896).
 
     Student task:
         Replace or extend the skeleton below with alternative layer selection,
         token pooling (mean, max, weighted), or multi-layer fusion strategies.
     """
     # ------------------------------------------------------------------
-    # STUDENT: Replace or extend the aggregation below.
-    # ------------------------------------------------------------------
-
-    # Last real token from layer 23 plus compact geometry.
     n_layers = hidden_states.shape[0]
-    selected_layers = (_FEATURE_LAYER, _NORM_RATIO_REFERENCE_LAYER)
-    layer_indices: dict[int, int] = {}
-    for selected_layer in selected_layers:
-        layer_idx = selected_layer
-        if layer_idx < 0:
-            layer_idx += n_layers
-        if not 0 <= layer_idx < n_layers:
-            raise ValueError(
-                f"layer index {selected_layer} invalid for n_layers={n_layers}"
-            )
-        layer_indices[selected_layer] = layer_idx
+    idx12 = _resolve_layer_index(_SEMANTIC_LAYER, n_layers)
+    idx23 = _resolve_layer_index(_DECISION_LAYER, n_layers)
+    idx22 = _resolve_layer_index(_NORM_RATIO_REFERENCE_LAYER, n_layers)
 
-    # Find the first/last real (non-padding) positions. The true prompt/response
-    # boundary is not available here, so first-vs-last is a no-solution.py proxy
-    # for context-to-answer drift.
-    real_positions = attention_mask.nonzero(as_tuple=False)  # (n_real, 1)
-    first_pos = int(real_positions[0].item())                 # scalar index
-    last_pos = int(real_positions[-1].item())                 # scalar index
+    real_positions = attention_mask.nonzero(as_tuple=False)
+    last_pos = int(real_positions[-1].item())
 
-    layer = hidden_states[layer_indices[_FEATURE_LAYER]]  # geometry readout layer
-    reference_layer = hidden_states[layer_indices[_NORM_RATIO_REFERENCE_LAYER]]
-    first_state = layer[first_pos]     # (hidden_dim,)
-    last_state = layer[last_pos]       # (hidden_dim,)
-    reference_last_state = reference_layer[last_pos]  # (hidden_dim,)
+    h12_last = hidden_states[idx12, last_pos]
+    h23_last = hidden_states[idx23, last_pos]
+    h22_last = hidden_states[idx22, last_pos]
 
-    reference_norm = torch.linalg.norm(reference_last_state, ord=2)
-    first_norm = torch.linalg.norm(first_state, ord=2)
-    last_norm = torch.linalg.norm(last_state, ord=2)
-    norm_ratio = last_norm / (reference_norm + torch.finfo(last_state.dtype).eps)
-    cosine_similarity = torch.dot(first_state, last_state) / (
-        first_norm * last_norm + torch.finfo(last_state.dtype).eps
-    )
-    relative_distance = torch.linalg.norm(last_state - first_state, ord=2)
+    norm23 = torch.linalg.norm(h23_last, ord=2)
+    norm22 = torch.linalg.norm(h22_last, ord=2)
+    norm_ratio = norm23 / (norm22 + torch.finfo(h23_last.dtype).eps)
 
-    geometry = torch.stack([norm_ratio, cosine_similarity, relative_distance])
-    return torch.cat([last_state, geometry], dim=0)
+    return torch.cat([h12_last, h23_last, norm_ratio.reshape(1)], dim=0)
     # ------------------------------------------------------------------
 
 

@@ -1,11 +1,10 @@
 """
 probe.py — Hallucination probe classifier (student-implemented).
 
-Implements ``HallucinationProbe``, a binary MLP that classifies feature
-vectors as truthful (0) or hallucinated (1).  Called from ``solution.py``
-via ``evaluate.run_evaluation``.  All four public methods (``fit``,
-``fit_hyperparameters``, ``predict``, ``predict_proba``) must be implemented
-and their signatures must not change.
+Implements ``HallucinationProbe``, a binary classifier that detects hallucinations
+from hidden-state features.  Called from ``solution.py`` via ``evaluate.run_evaluation``.
+All four public methods (``fit``, ``fit_hyperparameters``, ``predict``,
+``predict_proba``) must be implemented and their signatures must not change.
 """
 
 from __future__ import annotations
@@ -15,12 +14,17 @@ import os
 import numpy as np
 import torch
 import torch.nn as nn
+from sklearn.decomposition import PCA
 from sklearn.metrics import f1_score
+from sklearn.neural_network import MLPClassifier
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 
 _RANDOM_SEED_ENV = "PROBE_RANDOM_SEED"
 _RANDOM_SEED: int = 42
+
+_PCA_COMPONENTS = 128
 
 
 def _get_random_seed() -> int:
@@ -42,78 +46,53 @@ def _seed_everything(seed: int = _RANDOM_SEED) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-class SwiGLUProbeMLP(nn.Module):
-    """Small SwiGLU-style classifier head.
+def _pca_n_components(n_features: int, n_samples: int) -> int:
+    """Cap PCA rank so sklearn never errors on small folds."""
+    return min(_PCA_COMPONENTS, n_features, max(1, n_samples - 1))
 
-    Computes ``down_proj(silu(gate_proj(x)) * up_proj(x))``. This mirrors the
-    gated MLP shape used in modern decoder blocks while keeping the probe small.
-    """
 
-    def __init__(self, input_dim: int, hidden_dim: int = 256) -> None:
-        super().__init__()
-        self.gate_proj = nn.Linear(input_dim, hidden_dim)
-        self.up_proj = nn.Linear(input_dim, hidden_dim)
-        self.down_proj = nn.Linear(hidden_dim, 1)
-        self.activation = nn.SiLU()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        gated = self.activation(self.gate_proj(x)) * self.up_proj(x)
-        return self.down_proj(gated)
+def _build_pipeline(n_features: int, n_samples: int, random_state: int) -> Pipeline:
+    n_components = _pca_n_components(n_features, n_samples)
+    return Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            (
+                "pca",
+                PCA(n_components=n_components, random_state=random_state),
+            ),
+            (
+                "clf",
+                MLPClassifier(
+                    hidden_layer_sizes=(128,),
+                    alpha=0.01,
+                    early_stopping=True,
+                    max_iter=1000,
+                    random_state=random_state,
+                ),
+            ),
+        ]
+    )
 
 
 class HallucinationProbe(nn.Module):
-    """Binary classifier that detects hallucinations from hidden-state features.
+    """Binary classifier: StandardScaler → PCA → ``MLPClassifier``.
 
-    Extends ``torch.nn.Module``; the default architecture is a single
-    hidden-layer MLP with ``StandardScaler`` pre-processing.  The network is
-    built lazily in ``fit()`` once the feature dimension is known.
+    Retains ``torch.nn.Module`` for API compatibility with ``solution.py``;
+    inference uses scikit-learn only (no ``forward`` training path).
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self._net: nn.Module | None = None  # built lazily in fit()
-        self._scaler = StandardScaler()
-        self._threshold: float = 0.5  # tuned by fit_hyperparameters()
+        self._pipeline: Pipeline | None = None
+        self._threshold: float = 0.5
 
-    # ------------------------------------------------------------------
-    # STUDENT: Replace or extend the network definition below.
-    # ------------------------------------------------------------------
-    def _build_network(self, input_dim: int) -> None:
-        """Instantiate the network layers.
-
-        Called once at the start of ``fit()`` when ``input_dim`` is known.
-
-        Args:
-            input_dim: Feature vector dimensionality.
-        """
-        self._net = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # pragma: no cover
+        raise RuntimeError(
+            "HallucinationProbe uses a sklearn Pipeline; use predict_proba instead."
         )
-
-    # ------------------------------------------------------------------
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass — returns raw logits of shape ``(n_samples,)``.
-
-        Args:
-            x: Float tensor of shape ``(n_samples, feature_dim)``.
-
-        Returns:
-            1-D tensor of raw (pre-sigmoid) logits.
-        """
-        if self._net is None:
-            raise RuntimeError(
-                "Network has not been built yet. Call fit() before forward()."
-            )
-        return self._net(x).squeeze(-1)
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "HallucinationProbe":
         """Train the probe on labelled feature vectors.
-
-        Scales features with ``StandardScaler``, builds the network if needed,
-        and optimises with Adam + ``BCEWithLogitsLoss``.
 
         Args:
             X: Feature matrix of shape ``(n_samples, feature_dim)``.
@@ -123,37 +102,11 @@ class HallucinationProbe(nn.Module):
         Returns:
             ``self`` (for method chaining).
         """
-        _seed_everything(_get_random_seed())
-        X_scaled = self._scaler.fit_transform(X)
-
-        self._build_network(X_scaled.shape[1])
-
-        X_t = torch.from_numpy(X_scaled).float()
-        y_t = torch.from_numpy(y.astype(np.float32))
-
-        # Weight positive examples by neg/pos ratio to handle class imbalance.
-        n_pos = int(y.sum())
-        n_neg = len(y) - n_pos
-        pos_weight = torch.tensor([n_neg / max(n_pos, 1)], dtype=torch.float32)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-
-        # ------------------------------------------------------------------
-        # STUDENT: Replace or extend the training loop below.
-        # ------------------------------------------------------------------
-        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3, weight_decay=1e-2)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
-
-        self.train()
-        for _ in range(200):
-            optimizer.zero_grad()
-            logits = self(X_t)
-            loss = criterion(logits, y_t)
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
-        # ------------------------------------------------------------------
-
-        self.eval()
+        seed = _get_random_seed()
+        _seed_everything(seed)
+        n_samples, n_features = X.shape
+        self._pipeline = _build_pipeline(n_features, n_samples, seed)
+        self._pipeline.fit(X, y.astype(np.int64))
         return self
 
     def fit_hyperparameters(
@@ -174,9 +127,10 @@ class HallucinationProbe(nn.Module):
         Returns:
             ``self`` (for method chaining).
         """
+        if self._pipeline is None:
+            raise RuntimeError("Call fit() before fit_hyperparameters().")
         probs = self.predict_proba(X_val)[:, 1]
 
-        # Candidate thresholds: unique predicted probabilities plus a coarse grid.
         candidates = np.unique(np.concatenate([probs, np.linspace(0.0, 1.0, 101)]))
 
         best_threshold = 0.5
@@ -216,9 +170,6 @@ class HallucinationProbe(nn.Module):
             estimated probability of the hallucinated class (label 1).
             Used to compute AUROC.
         """
-        X_scaled = self._scaler.transform(X)
-        X_t = torch.from_numpy(X_scaled).float()
-        with torch.no_grad():
-            logits = self(X_t)
-            prob_pos = torch.sigmoid(logits).numpy()
-        return np.stack([1.0 - prob_pos, prob_pos], axis=1)
+        if self._pipeline is None:
+            raise RuntimeError("Call fit() before predict_proba().")
+        return self._pipeline.predict_proba(X)
