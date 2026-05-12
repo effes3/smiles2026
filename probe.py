@@ -1,9 +1,9 @@
 """
 probe.py — Hallucination probe classifier (student-implemented).
 
-Implements ``HallucinationProbe``, a binary **linear** probe (logistic
-regression on scaled features) for truthful (0) vs hallucinated (1).  Called
-from ``solution.py`` via ``evaluate.run_evaluation``.  All four public methods (``fit``,
+Implements ``HallucinationProbe``, a binary MLP that classifies feature
+vectors as truthful (0) or hallucinated (1).  Called from ``solution.py``
+via ``evaluate.run_evaluation``.  All four public methods (``fit``,
 ``fit_hyperparameters``, ``predict``, ``predict_proba``) must be implemented
 and their signatures must not change.
 """
@@ -17,16 +17,28 @@ from sklearn.metrics import f1_score
 from sklearn.preprocessing import StandardScaler
 
 
+_RANDOM_SEED: int = 42
+
+
+def _seed_everything(seed: int = _RANDOM_SEED) -> None:
+    """Seed libraries used by the probe for reproducible training."""
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 class HallucinationProbe(nn.Module):
     """Binary classifier that detects hallucinations from hidden-state features.
 
-    Extends ``torch.nn.Module``; uses ``StandardScaler`` then a single
-    ``nn.Linear`` into one logit (trained with BCE).  Built lazily in ``fit()``.
+    Extends ``torch.nn.Module``; the default architecture is a single
+    hidden-layer MLP with ``StandardScaler`` pre-processing.  The network is
+    built lazily in ``fit()`` once the feature dimension is known.
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self._net: nn.Linear | None = None  # built lazily in fit()
+        self._net: nn.Sequential | None = None  # built lazily in fit()
         self._scaler = StandardScaler()
         self._threshold: float = 0.5  # tuned by fit_hyperparameters()
 
@@ -41,7 +53,11 @@ class HallucinationProbe(nn.Module):
         Args:
             input_dim: Feature vector dimensionality.
         """
-        self._net = nn.Linear(input_dim, 1)
+        self._net = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1),
+        )
 
     # ------------------------------------------------------------------
 
@@ -64,7 +80,7 @@ class HallucinationProbe(nn.Module):
         """Train the probe on labelled feature vectors.
 
         Scales features with ``StandardScaler``, builds the network if needed,
-        and optimises with Adam + ``BCEWithLogitsLoss`` (linear probe).
+        and optimises with Adam + ``BCEWithLogitsLoss``.
 
         Args:
             X: Feature matrix of shape ``(n_samples, feature_dim)``.
@@ -74,6 +90,7 @@ class HallucinationProbe(nn.Module):
         Returns:
             ``self`` (for method chaining).
         """
+        _seed_everything()
         X_scaled = self._scaler.fit_transform(X)
 
         self._build_network(X_scaled.shape[1])
@@ -170,4 +187,3 @@ class HallucinationProbe(nn.Module):
             logits = self(X_t)
             prob_pos = torch.sigmoid(logits).numpy()
         return np.stack([1.0 - prob_pos, prob_pos], axis=1)
-

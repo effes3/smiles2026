@@ -20,6 +20,12 @@ from __future__ import annotations
 import torch
 
 
+# Which hidden-state stack entry to use for the last-token feature.
+# Index 0 = token embeddings; indices 1..24 = transformer block outputs for
+# Qwen2.5-0.5B. Keep -1 for the final transformer layer, or set e.g. 12/18/20.
+_LAST_TOKEN_LAYER_INDEX: int = 24
+
+
 def aggregate(
     hidden_states: torch.Tensor,
     attention_mask: torch.Tensor,
@@ -45,8 +51,16 @@ def aggregate(
     # STUDENT: Replace or extend the aggregation below.
     # ------------------------------------------------------------------
 
-    # Default: last real token of the final transformer layer.
-    layer = hidden_states[-1]          # (seq_len, hidden_dim)
+    # Last real token from a configurable layer.
+    n_layers = hidden_states.shape[0]
+    layer_idx = _LAST_TOKEN_LAYER_INDEX
+    if layer_idx < 0:
+        layer_idx += n_layers
+    if not 0 <= layer_idx < n_layers:
+        raise ValueError(
+            f"layer index {_LAST_TOKEN_LAYER_INDEX} invalid for n_layers={n_layers}"
+        )
+    layer = hidden_states[layer_idx]   # (seq_len, hidden_dim)
 
     # Find the index of the last real (non-padding) token.
     real_positions = attention_mask.nonzero(as_tuple=False)  # (n_real, 1)
