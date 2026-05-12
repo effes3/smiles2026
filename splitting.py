@@ -1,6 +1,10 @@
 """
 splitting.py — Train / validation / test split utilities (student-implementable).
 
+``split_data`` implements the **5-fold stratified outer CV** + **inner stratified
+validation** slice used for ``tests/TESTS_Ratio.md`` (~73.77% mean test AUROC
+over seeds 42–44).
+
 ``split_data`` receives the label array ``y`` and, optionally, the full
 DataFrame ``df`` (for group-aware splits).  It must return a list of
 ``(idx_train, idx_val, idx_test)`` tuples of integer index arrays.

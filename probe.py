@@ -3,8 +3,9 @@ probe.py — Hallucination probe classifier (student-implemented).
 
 Implements ``HallucinationProbe``, a binary classifier that detects hallucinations
 from hidden-state features.  Called from ``solution.py`` via ``evaluate.run_evaluation``.
-All four public methods (``fit``, ``fit_hyperparameters``, ``predict``,
-``predict_proba``) must be implemented and their signatures must not change.
+
+Configuration aligned with ``tests/TESTS_Ratio.md`` (~73.77% mean test AUROC):
+ReLU MLP, AdamW, cosine LR, class-weighted BCE, 200 epochs.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ def _seed_everything(seed: int = _RANDOM_SEED) -> None:
 
 
 class HallucinationProbe(nn.Module):
-    """Binary probe: ``StandardScaler`` + Linear(→256) → SiLU → Dropout → Linear(→1)."""
+    """``StandardScaler`` + ``Linear → ReLU → Linear`` (``TESTS_Ratio`` probe)."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -54,13 +55,11 @@ class HallucinationProbe(nn.Module):
     def _build_network(self, input_dim: int) -> None:
         self._net = nn.Sequential(
             nn.Linear(input_dim, 256),
-            nn.SiLU(),
-            nn.Dropout(0.4),
+            nn.ReLU(),
             nn.Linear(256, 1),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Raw logits of shape ``(n_samples,)``."""
         if self._net is None:
             raise RuntimeError(
                 "Network has not been built yet. Call fit() before forward()."
@@ -68,7 +67,6 @@ class HallucinationProbe(nn.Module):
         return self._net(x).squeeze(-1)
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "HallucinationProbe":
-        """Train with AdamW, cosine LR schedule, and class-weighted BCE."""
         _seed_everything(_get_random_seed())
         X_scaled = self._scaler.fit_transform(X)
 
@@ -102,7 +100,6 @@ class HallucinationProbe(nn.Module):
     def fit_hyperparameters(
         self, X_val: np.ndarray, y_val: np.ndarray
     ) -> "HallucinationProbe":
-        """Tune the decision threshold on validation F1."""
         probs = self.predict_proba(X_val)[:, 1]
 
         candidates = np.unique(np.concatenate([probs, np.linspace(0.0, 1.0, 101)]))

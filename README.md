@@ -127,6 +127,8 @@ The middle bar is **not** comparable feature-for-feature to the first (different
 
 Under **5-fold stratified evaluation** on the **689-sample** labelled set, the **strongest reproducible signal** in our logged sweep came from **staying close to the late layer (23)**: last-token vector plus a few **cheap geometric scalars** (especially **norm ratio to layer 22**), probed with a **compact PyTorch MLP** and **threshold tuning on a stratified validation slice**. Bigger feature stacks and alternative probes were worth trying, but **did not beat that baseline** in the documented internal metrics. The **official competition outcome** still depends on **generalization to `test.csv`**, which we do not label locally—so treat internal AUROC as **model selection guidance**, not a guarantee on the hidden test set.
 
+**AUROC peaks (logged):** the **highest before K-fold** is in **`tests/TESTS_Geometry.md`**: mean test AUROC up to **75.89%** (layer 22 with geometry scalars). The **75.45%** value is the **mean** test AUROC for **layer 22** in the **last-token-only** sweep **`tests/TESTS.md`** (no extra geometry). The **highest after K-fold** (5-fold mean over seeds 42–44) is **`tests/TESTS_Ratio.md`**: **73.77%** mean test AUROC (L23 + norm ratio + cosine + distance).
+
 ---
 
 ## Repository layout
