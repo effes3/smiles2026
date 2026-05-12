@@ -20,7 +20,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 _RANDOM_SEED_ENV = "PROBE_RANDOM_SEED"
-_RANDOM_SEED: int = 42
+_RANDOM_SEED: int = 44
 
 
 def _get_random_seed() -> int:
@@ -140,7 +140,8 @@ class HallucinationProbe(nn.Module):
         # ------------------------------------------------------------------
         # STUDENT: Replace or extend the training loop below.
         # ------------------------------------------------------------------
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3, weight_decay=1e-2)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
         self.train()
         for _ in range(200):
@@ -149,6 +150,7 @@ class HallucinationProbe(nn.Module):
             loss = criterion(logits, y_t)
             loss.backward()
             optimizer.step()
+            scheduler.step()
         # ------------------------------------------------------------------
 
         self.eval()
