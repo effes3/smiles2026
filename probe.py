@@ -87,10 +87,8 @@ class HallucinationProbe(nn.Module):
             input_dim: Feature vector dimensionality.
         """
         self._net = nn.Sequential(
-            nn.LayerNorm(input_dim),
             nn.Linear(input_dim, 256),
             nn.ReLU(),
-            nn.Dropout(0.4),
             nn.Linear(256, 1),
         )
 

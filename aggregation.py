@@ -54,8 +54,10 @@ def aggregate(
                         tokens and 0 for padding.
 
     Returns:
-        A 1-D feature tensor of shape ``(hidden_dim,)`` or
-        ``(k * hidden_dim,)`` if multiple layers are concatenated.
+        A 1-D feature tensor with the selected layer's last real token
+        followed by three geometric scalars:
+        ``||last||_2``, cosine similarity between first and last real token,
+        and Euclidean distance between first and last real token.
 
     Student task:
         Replace or extend the skeleton below with alternative layer selection,
@@ -77,13 +79,26 @@ def aggregate(
         )
     layer = hidden_states[layer_idx]   # (seq_len, hidden_dim)
 
-    # Find the index of the last real (non-padding) token.
+    # Find the first/last real (non-padding) positions. The true prompt/response
+    # boundary is not available here, so first-vs-last is a no-solution.py proxy
+    # for context-to-answer drift.
     real_positions = attention_mask.nonzero(as_tuple=False)  # (n_real, 1)
+    first_pos = int(real_positions[0].item())                 # scalar index
     last_pos = int(real_positions[-1].item())                 # scalar index
 
-    feature = layer[last_pos]          # (hidden_dim,)
+    first_state = layer[first_pos]     # (hidden_dim,)
+    last_state = layer[last_pos]       # (hidden_dim,)
 
-    return feature
+    magnitude = torch.linalg.norm(last_state, ord=2)
+    first_norm = torch.linalg.norm(first_state, ord=2)
+    last_norm = torch.linalg.norm(last_state, ord=2)
+    cosine_similarity = torch.dot(first_state, last_state) / (
+        first_norm * last_norm + torch.finfo(last_state.dtype).eps
+    )
+    relative_distance = torch.linalg.norm(last_state - first_state, ord=2)
+
+    geometry = torch.stack([magnitude, cosine_similarity, relative_distance])
+    return torch.cat([last_state, geometry], dim=0)
     # ------------------------------------------------------------------
 
 
