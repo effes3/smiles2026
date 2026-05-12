@@ -20,7 +20,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 _RANDOM_SEED_ENV = "PROBE_RANDOM_SEED"
-_RANDOM_SEED: int = 44
+_RANDOM_SEED: int = 42
 
 
 def _get_random_seed() -> int:
