@@ -17,27 +17,12 @@ single entry point called from the notebook.
 
 from __future__ import annotations
 
-import os
-
 import torch
 
 
-# Which hidden-state stack entry to use for the last-token feature.
 # Index 0 = token embeddings; indices 1..24 = transformer block outputs for
-# Qwen2.5-0.5B. Keep -1 for the final transformer layer, or set e.g. 12/18/20.
-_LAST_TOKEN_LAYER_INDEX: int = -3
-_LAST_TOKEN_LAYER_ENV = "LAST_TOKEN_LAYER_INDEX"
-
-
-def _get_last_token_layer_index() -> int:
-    """Return selected layer index, optionally overridden by env var."""
-    raw_layer = os.environ.get(_LAST_TOKEN_LAYER_ENV)
-    if raw_layer is None:
-        return _LAST_TOKEN_LAYER_INDEX
-    try:
-        return int(raw_layer)
-    except ValueError as exc:
-        raise ValueError(f"{_LAST_TOKEN_LAYER_ENV} must be an integer") from exc
+# Qwen2.5-0.5B. Use the late-layer stack that won the K-fold comparison.
+_STACK_LAYER_INDICES: tuple[int, ...] = (21, 22, 23)
 
 
 def aggregate(
@@ -54,9 +39,9 @@ def aggregate(
                         tokens and 0 for padding.
 
     Returns:
-        A 1-D feature tensor with the selected layer's last real token
-        followed by three geometric scalars:
-        ``||last||_2``, cosine similarity between first and last real token,
+        A 1-D feature tensor containing last real token vectors from layers
+        21, 22, and 23, followed by three geometric scalars computed on layer
+        23: ``||last||_2``, cosine similarity between first and last real token,
         and Euclidean distance between first and last real token.
 
     Student task:
@@ -67,17 +52,18 @@ def aggregate(
     # STUDENT: Replace or extend the aggregation below.
     # ------------------------------------------------------------------
 
-    # Last real token from a configurable layer.
+    # Last real token from a late-layer stack.
     n_layers = hidden_states.shape[0]
-    selected_layer = _get_last_token_layer_index()
-    layer_idx = selected_layer
-    if layer_idx < 0:
-        layer_idx += n_layers
-    if not 0 <= layer_idx < n_layers:
-        raise ValueError(
-            f"layer index {selected_layer} invalid for n_layers={n_layers}"
-        )
-    layer = hidden_states[layer_idx]   # (seq_len, hidden_dim)
+    layer_indices: list[int] = []
+    for selected_layer in _STACK_LAYER_INDICES:
+        layer_idx = selected_layer
+        if layer_idx < 0:
+            layer_idx += n_layers
+        if not 0 <= layer_idx < n_layers:
+            raise ValueError(
+                f"layer index {selected_layer} invalid for n_layers={n_layers}"
+            )
+        layer_indices.append(layer_idx)
 
     # Find the first/last real (non-padding) positions. The true prompt/response
     # boundary is not available here, so first-vs-last is a no-solution.py proxy
@@ -86,6 +72,11 @@ def aggregate(
     first_pos = int(real_positions[0].item())                 # scalar index
     last_pos = int(real_positions[-1].item())                 # scalar index
 
+    stacked_last_states = [
+        hidden_states[layer_idx, last_pos] for layer_idx in layer_indices
+    ]
+
+    layer = hidden_states[layer_indices[-1]]  # geometry readout layer
     first_state = layer[first_pos]     # (hidden_dim,)
     last_state = layer[last_pos]       # (hidden_dim,)
 
@@ -98,7 +89,7 @@ def aggregate(
     relative_distance = torch.linalg.norm(last_state - first_state, ord=2)
 
     geometry = torch.stack([magnitude, cosine_similarity, relative_distance])
-    return torch.cat([last_state, geometry], dim=0)
+    return torch.cat([*stacked_last_states, geometry], dim=0)
     # ------------------------------------------------------------------
 
 
